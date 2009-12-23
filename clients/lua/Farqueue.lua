@@ -5,6 +5,7 @@ module('Farqueue', package.seeall)
 local http = require('socket.http')
 local json = require('json')
 local posix = require('posix')
+local lash = require('lash')
 
 function New(queue, construct)
     construct = construct or {}
@@ -14,7 +15,9 @@ function New(queue, construct)
 
     local url = string.format('http://%s:%s/%s', host, port, queue) 
 
-    local function dequeue(self, callback)
+    local exit_on_result = false
+
+    local function dequeue(self, callback, looplimit)
         while true do
             local body, status = http.request(url)
 	    local struct = json.decode(body)
@@ -30,8 +33,21 @@ function New(queue, construct)
 
 		    -- rethrow the error 
 		    error(err)
+		else
+		    if exit_on_result then
+			exit_on_result = false
+			return
+		    end
 		end
             elseif status == 404 then
+		if looplimit then
+		    if looplimit == 0 then
+			return
+		    end
+
+		    looplimit = looplimit - 1
+		end
+
                 -- queue empty, back off
                 posix.sleep(1)
             else
@@ -57,9 +73,53 @@ function New(queue, construct)
         -- TODO check status of return from enqueue
     end 
 
+    local function message(self, data, timeout)
+	timeout = timeout or 1
+
+	local id = lash.MD5.string2hex(posix.getpid().ppid .. os.time())
+
+	local message = {
+	    id = id,
+	    data = data,
+	} 
+
+	self:enqueue(message)
+
+	local save_url = url
+
+	local result
+
+	url = url .. id
+
+	exit_on_result = true
+	self:dequeue(function(d)
+	    result = d
+	end, timeout)
+
+	url = save_url
+
+	return result
+    end
+
+    local function subscribe(self, callback)
+	self:dequeue(function(message)
+	    local data = message.data
+	    local id = message.id
+
+	    local res = callback(data)
+
+	    local save_url = url
+	    url = url .. id
+	    self:enqueue(res)
+	    url = save_url
+	end) 
+    end
+
     local farqueue = {
         enqueue = enqueue,
         dequeue = dequeue,
+        message = message,
+	subscribe = subscribe,
     }
 
     return farqueue

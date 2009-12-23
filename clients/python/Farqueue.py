@@ -8,10 +8,14 @@ import sys
 
 class Client:
     def __init__(self, queue, host='127.0.0.1', port=9094):
-        hoststr = '%s:%d' % (host, port)
-
-        self.conn = httplib.HTTPConnection(hoststr)
+        self.host = host
+	self.port = port
         self.queue = queue
+
+    def _getconnection(self):
+	hoststr = '%s:%d' % (self.host, self.port)
+	return httplib.HTTPConnection(hoststr)
+	
 
     def enqueue(self, data):
         headers = {
@@ -19,13 +23,19 @@ class Client:
             "Accept": "text/plain"
         }
 
-        params = 'data=' + urllib.quote(simplejson.dumps(data))
-        self.conn.request("POST", '/' + self.queue, params, headers)
-        res = self.conn.getresponse()
+	conn = self._getconnection()
+
+        conn.request("POST", '/' + self.queue, simplejson.dumps(data), headers)
+        res = conn.getresponse()
+	conn.close()
 
     def dequeue(self, func):
         while 1:
-            res = self.conn.request("GET", self.queue)
+	    conn = self._getconnection()
+
+            conn.request("GET", '/' + self.queue)
+	    res = conn.getresponse()
+	    #conn.close()
 
             if res.status == 200:
                 func(simplejson.loads(res.read())) 

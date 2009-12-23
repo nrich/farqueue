@@ -7,6 +7,11 @@ use warnings;
 
 use JSON;
 use LWP::UserAgent;
+use Time::HiRes;
+use Digest::MD5 qw/md5_hex/;
+use Sys::Hostname qw/hostname/;
+
+use Data::Dumper qw/Dumper/;
 
 sub new {
     my ($package, $queuename, %args) = @_;
@@ -47,9 +52,10 @@ sub dequeue {
 
     my $json = $self->{json};
     my $ua = $self->{ua};
-    my $url = $self->{url};
 
     while (1) {
+	my $url = $self->{url};
+
         my $res = $ua->get($url);
 
         if ($res->code() == 200) {
@@ -71,6 +77,68 @@ sub dequeue {
             die "Fatal error: " . $res->status_line();
         }
     }
+}
+
+sub subscribe {
+    my ($self, $callback) = @_;
+
+    $self->dequeue(sub {
+	my ($message) = @_;
+
+	my $data = $message->{data};
+	my $return_id = $message->{id};
+
+	my $res = $callback->($data);
+
+	my $url = $self->{url};
+	
+	$self->{url} = $url . $return_id;
+	$self->enqueue($res);
+	$self->{url} = $url;
+    });
+}
+
+sub message {
+    my ($self, $data, $timeout) = @_;
+
+    $timeout ||= 10;
+
+    my $id = md5_hex(hostname() . Time::HiRes::time() . $$);
+
+    my $message = {
+	data => $data,
+	id => $id,
+    };
+
+    my $url = $self->{url};
+    $self->enqueue($message);
+
+    my $result;
+
+    eval {
+	local $SIG{ALRM} = sub { die "alarm\n" }; # NB: \n required
+
+	alarm $timeout;
+
+	$self->{url} = $url . $id;
+	$self->dequeue(sub {
+	    my ($data) = @_;
+
+	    $result = $data;
+
+	    # We have a result, exit here
+	    goto END;
+	});
+    };
+
+END:
+    $self->{url} = $url;
+
+    if ($@) {
+	die unless $@ eq "alarm\n";
+    }
+
+    return $result;
 }
 
 1;
