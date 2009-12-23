@@ -137,6 +137,8 @@ void generic_handler(struct evhttp_request *req, void *arg) {
     } else if (req->type == EVHTTP_REQ_POST) {
         enqueue(queue_name, req, buf);
     }
+
+    evbuffer_free(buf);
 }
 
 int main(int argc, char **argv) {
